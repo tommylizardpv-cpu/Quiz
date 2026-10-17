@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quiz Night</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/8.10.1/firebase-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--text:#1c1c1e;--accent:#5b3fd6;--muted:#777;--line:#e2e0da;--ok:#1e8e4e}
+@media (prefers-color-scheme: dark){:root{--bg:#17171a;--card:#222227;--text:#eee;--accent:#9b8cff;--muted:#999;--line:#333}}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:16px;max-width:720px;margin:auto}
+h1{font-size:1.4rem;margin:0 0 12px}
+nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+nav button{flex:1;padding:10px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
+nav button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+input,select,textarea{width:100%;padding:10px;margin:4px 0 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
+.btn{padding:10px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;font:inherit;margin:3px}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+.btn.danger{background:#c0392b}
+.btn.ok{background:var(--ok)}
+.btn:disabled{opacity:.4}
+.muted{color:var(--muted);font-size:.9rem}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.tag{font-size:.75rem;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.big{font-size:1.25rem;font-weight:600;margin:8px 0}
+.me{outline:2px solid var(--accent)}
+#qr{background:#fff;padding:12px;display:inline-block;border-radius:8px}
+</style>
+</head>
+<body>
+<h1 id="title">🎲 Quiz Night</h1>
+<div id="app"></div>
+
+<script>
+/* CONFIGURAZIONE: sostituisci con l'URL del tuo database Firebase */
+const DB_URL = "https://IL-TUO-PROGETTO-default-rtdb.firebaseio.com";
+
+firebase.initializeApp({ databaseURL: DB_URL });
+const DB = firebase.database();
+const IS_PLAYER = new URLSearchParams(location.search).has("p");
+const HOST_TABS = ["Domande", "Squadre", "Gioco", "QR"];
+
+let ST = {};              // stato condiviso letto da Firebase
+let tab = "Domande";
+let myTeam = localStorage.getItem("qnTeam") || "";
+
+DB.ref("quiz").on("value", s => { ST = s.val() || {}; render(); });
+
+/* ---------- utilità ---------- */
+const h = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const cfg = () => ST.config || { phase: "iscrizione", idx: 0 };
+const qs = () => Object.entries(ST.questions || {}).map(([id,q]) => ({id, ...q})).sort((a,b) => a.order - b.order);
+const teams = () => Object.entries(ST.teams || {}).map(([id,t]) => ({id, ...t}));
+const curQ = () => qs()[cfg().idx];
+function scores(){
+  const m = {};
+  teams().forEach(t => m[t.id] = 0);
+  qs().forEach(q => Object.keys(q.awarded || {}).forEach(tid => { if (tid in m) m[tid] += Number(q.points) || 0; }));
+  return m;
+}
+function board(me){
+  const sc = scores();
+  return teams().filter(t => t.confirmed).sort((a,b) => sc[b.id] - sc[a.id]).map(t =>
+    `<div class="row ${t.id===me?'me':''}"><span>${h(t.name)}</span><strong>${sc[t.id]}</strong></div>`).join("")
+    || `<p class="muted">Nessuna squadra confermata.</p>`;
+}
+
+/* ---------- render generale (preserva i valori degli input) ---------- */
+function render(){
+  const keep = {};
+  document.querySelectorAll("#app input, #app textarea, #app select").forEach(e => { if (e.id) keep[e.id] = e.value; });
+  const app = document.getElementById("app");
+  if (IS_PLAYER) app.innerHTML = viewPlayer();
+  else {
+    app.innerHTML = `<nav>${HOST_TABS.map(t => `<button class="${t===tab?'on':''}" onclick="setTab('${t}')">${t}</button>`).join("")}</nav><div id="main">${viewHost()}</div>`;
+    if (tab === "QR") makeQR();
+  }
+  Object.entries(keep).forEach(([k,v]) => { const e = document.getElementById(k); if (e) e.value = v; });
+}
+function setTab(t){ tab = t; render(); }
+
+/* ---------- HOST ---------- */
+function viewHost(){
+  if (tab === "Domande") return hostQuestions();
+  if (tab === "Squadre") return hostTeams();
+  if (tab === "Gioco") return hostGame();
+  return `<div class="card" style="text-align:center"><p>I concorrenti inquadrano il codice per collegarsi.</p><div id="qr"></div><p class="muted" style="word-break:break-all">${h(location.href.split("?")[0] + "?p=1")}</p></div>`;
+}
+function hostQuestions(){
+  const list = qs().map(q => `
+    <div class="row"><div><span class="tag">${h(q.cat||"Generale")} · ${q.points} pt · ${q.type==="scelta"?"scelta multipla":"risposta libera"}</span><br>${h(q.text)}
+    <div class="muted">Risposta: ${h(q.answer)}</div></div>
+    <button class="btn danger" onclick="delQ('${q.id}')">✕</button></div>`).join("") || `<p class="muted">Nessuna domanda.</p>`;
+  return `
+  <div class="card">
+    <strong>Nuova domanda</strong>
+    <input id="qCat" placeholder="Categoria">
+    <textarea id="qText" rows="2" placeholder="Testo della domanda"></textarea>
+    <input id="qAns" placeholder="Risposta corretta">
+    <select id="qType"><option value="testo">Risposta libera (scritta)</option><option value="scelta">Scelta multipla</option></select>
+    <input id="qOpts" placeholder="Opzioni separate da virgola (solo scelta multipla)">
+    <select id="qPts"><option value="1">1 punto</option><option value="2" selected>2 punti</option><option value="3">3 punti</option></select>
+    <button class="btn" onclick="addQ()">Aggiungi</button>
+  </div>
+  <div class="card">${list}</div>`;
+}
+function addQ(){
+  const text = document.getElementById("qText").value.trim();
+  if (!text) return;
+  const type = document.getElementById("qType").value;
+  const opts = document.getElementById("qOpts").value.split(",").map(s => s.trim()).filter(Boolean);
+  DB.ref("quiz/questions/" + uid()).set({
+    order: Date.now(), cat: document.getElementById("qCat").value.trim(), text,
+    answer: document.getElementById("qAns").value.trim(), points: Number(document.getElementById("qPts").value),
+    type, options: type === "scelta" ? opts.join("|") : "", awarded: {}
+  });
+  ["qCat","qText","qAns","qOpts"].forEach(id => document.getElementById(id).value = "");
+}
+function delQ(id){ DB.ref("quiz/questions/" + id).remove(); }
+
+function hostTeams(){
+  const list = teams().map(t => `
+    <div class="row"><div><strong>${h(t.name)}</strong> <span class="tag">${t.confirmed?"confermata":"in attesa"}</span>
+    <div class="muted">${h(t.members||"")}</div></div>
+    <div><button class="btn ${t.confirmed?'ghost':'ok'}" onclick="toggleTeam('${t.id}')">${t.confirmed?"Annulla":"Conferma"}</button>
+    <button class="btn danger" onclick="delTeam('${t.id}')">✕</button></div></div>`).join("") || `<p class="muted">Nessuna prenotazione. Max 10 concorrenti consigliati.</p>`;
+  return `<div class="card">${list}</div>`;
+}
+function toggleTeam(id){ const t = ST.teams[id]; DB.ref("quiz/teams/" + id + "/confirmed").set(!t.confirmed); }
+function delTeam(id){ DB.ref("quiz/teams/" + id).remove(); DB.ref("quiz/answers/" + id).remove(); }
+
+function hostGame(){
+  const c = cfg(), q = curQ(), n = qs().length;
+  if (!n) return `<p class="muted">Aggiungi prima delle domande.</p>`;
+  const ctrl = `
+    <div class="card">
+      <span class="tag">Fase: ${h(c.phase)}</span>
+      <div style="margin-top:8px">
+        <button class="btn ghost" onclick="setPhase('iscrizione')">Iscrizioni aperte</button>
+        <button class="btn" onclick="startQ()" ${!n?'disabled':''}>Avvia domanda</button>
+        <button class="btn ghost" onclick="setPhase('risposte')">Chiudi risposte</button>
+        <button class="btn ghost" onclick="setPhase('classifica')">Classifica</button>
+      </div>
+      <div style="margin-top:8px">
+        <button class="btn ghost" onclick="moveQ(-1)" ${c.idx<=0?'disabled':''}>← Precedente</button>
+        <button class="btn ghost" onclick="moveQ(1)" ${c.idx>=n-1?'disabled':''}>Successiva →</button>
+      </div>
+    </div>`;
+  if (!q) return ctrl;
+  const opts = q.type === "scelta" ? `<p class="muted">Opzioni: ${h(q.options)}</p>` : "";
+  const answers = teams().filter(t => t.confirmed).map(t => {
+    const a = ST.answers?.[t.id]?.[q.id]?.value;
+    const on = q.awarded?.[t.id];
+    return `<div class="row"><div><strong>${h(t.name)}</strong><br><span class="muted">${a ? h(a) : "— nessuna risposta"}</span></div>
+      <button class="btn ${on?'ok':'ghost'}" onclick="award('${t.id}')">${on?'✓ punti':'+ '+q.points}</button></div>`;
+  }).join("") || `<p class="muted">Nessuna squadra confermata.</p>`;
+  return ctrl + `
+    <div class="card">
+      <span class="tag">Domanda ${c.idx+1}/${n} · ${h(q.cat||"Generale")} · ${q.points} pt</span>
+      <div class="big">${h(q.text)}</div>
+      <p class="muted">Risposta corretta: <strong>${h(q.answer)}</strong></p>${opts}
+    </div>
+    <div class="card"><strong>Risposte</strong>${answers}</div>
+    <div class="card"><strong>Classifica</strong>${board()}</div>`;
+}
+function setPhase(p){ DB.ref("quiz/config/phase").set(p); }
+function startQ(){ DB.ref("quiz/config").update({phase:"domanda", idx: cfg().idx}); }
+function moveQ(d){ DB.ref("quiz/config").update({phase:"domanda", idx: cfg().idx + d}); }
+function award(tid){
+  const q = curQ();
+  const on = q.awarded?.[tid];
+  DB.ref("quiz/questions/" + q.id + "/awarded/" + tid).set(on ? null : true);
+}
+
+/* ---------- CONCORRENTE ---------- */
+function viewPlayer(){
+  const me = myTeam && ST.teams?.[myTeam];
+  if (!myTeam || !me) return bookingForm();
+  const c = cfg();
+  const head = `<div class="card"><strong>${h(me.name)}</strong></div>`;
+  if (!me.confirmed) return head + `<div class="card"><p>Prenotazione inviata. Attendi la conferma del presentatore.</p></div>`;
+  if (c.phase === "iscrizione") return head + `<div class="card"><p>Iscrizioni chiuse a breve. Attendi l'inizio del quiz.</p></div>`;
+  if (c.phase === "classifica") return head + `<div class="card"><strong>Classifica</strong>${board(myTeam)}</div>`;
+  const q = curQ();
+  if (!q) return head + `<div class="card"><p class="muted">In attesa della prima domanda.</p></div>`;
+  const mine = ST.answers?.[myTeam]?.[q.id]?.value;
+  const locked = c.phase !== "domanda";
+  let input;
+  if (q.type === "scelta") {
+    input = q.options.split("|").filter(Boolean).map(o =>
+      `<button class="btn ${mine===o?'ok':'ghost'}" ${locked?'disabled':''} onclick="answer(${JSON.stringify(o).replace(/"/g,'&quot;')})">${h(o)}</button>`).join("");
+  } else {
+    input = `<input id="pAns" placeholder="La tua risposta" ${locked?'disabled':''}>
+      <button class="btn" ${locked?'disabled':''} onclick="answer(document.getElementById('pAns').value)">Invia risposta</button>`;
+  }
+  return head + `<div class="card">
+      <span class="tag">${q.points} pt · ${h(q.cat||"Generale")}</span>
+      <div class="big">${h(q.text)}</div>
+      ${locked ? `<p class="muted">Risposte chiuse.</p>` : ""}
+      ${mine ? `<p>La tua risposta: <strong>${h(mine)}</strong></p>` : ""}
+      ${input}
+    </div>`;
+}
+function answer(v){
+  v = String(v ?? "").trim();
+  if (!v) return;
+  DB.ref(`quiz/answers/${myTeam}/${curQ().id}`).set({value: v});
+}
+function bookingForm(){
+  return `<div class="card">
+    <strong>Prenota la tua squadra</strong>
+    <input id="bName" placeholder="Nome squadra">
+    <input id="bMem" placeholder="Membri (facoltativo)">
+    <button class="btn" onclick="book()">Prenota</button>
+  </div>`;
+}
+function book(){
+  const name = document.getElementById("bName").value.trim();
+  if (!name) return;
+  const id = uid();
+  DB.ref("quiz/teams/" + id).set({ name, members: document.getElementById("bMem").value.trim(), confirmed: false });
+  myTeam = id;
+  localStorage.setItem("qnTeam", id);
+}
+
+/* ---------- QR ---------- */
+function makeQR(){
+  const el = document.getElementById("qr");
+  if (!el) return;
+  el.innerHTML = "";
+  if (typeof QRCode === "undefined") { el.textContent = "QR non disponibile"; return; }
+  new QRCode(el, { text: location.href.split("?")[0] + "?p=1", width: 220, height: 220 });
+}
+</script>
+</body>
+</html>
