@@ -51,7 +51,24 @@ let myTeam = localStorage.getItem("qnTeam") || "";
 
 DB.ref("quiz").on("value", s => { ST = s.val() || {}; render(); });
 
-/* ---------- utilità ---------- */
+let doneKey = null;
+function remaining(){
+  const c = cfg();
+  if (c.phase !== "domanda" || !c.start) return null;
+  return c.start + (c.secs || 30) * 1000 - Date.now();
+}
+setInterval(() => {
+  const r = remaining();
+  if (r === null) return;
+  const s = Math.max(0, Math.ceil(r / 1000));
+  document.querySelectorAll(".tick").forEach(e => e.textContent = s + " s");
+  if (r <= 0 && doneKey !== cfg().start) {
+    doneKey = cfg().start;
+    if (IS_PLAYER) render();
+    else DB.ref("quiz/config/phase").set("risposte");
+  }
+}, 500);
+  /* ---------- utilità ---------- */
 const h = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 const cfg = () => ST.config || { phase: "iscrizione", idx: 0 };
@@ -106,7 +123,7 @@ function hostQuestions(){
     <select id="qType"><option value="testo">Risposta libera (scritta)</option><option value="scelta">Scelta multipla</option><option value="prenota">Prenotazione (risposta a voce)</option></select>
     <input id="qOpts" placeholder="Opzioni separate da virgola (solo scelta multipla)">
     <select id="qPts"><option value="1">1 punto</option><option value="2" selected>2 punti</option><option value="3">3 punti</option></select>
-    <button class="btn" onclick="addQ()">Aggiungi</button>
+    <input id="qSecs" type="number" min="5" value="30" placeholder="Secondi per rispondere">     <button class="btn" onclick="addQ()">Aggiungi</button>
   </div>
   <div class="card">${list}</div>`;
 }
@@ -118,7 +135,7 @@ function addQ(){
   DB.ref("quiz/questions/" + uid()).set({
     order: Date.now(), cat: document.getElementById("qCat").value.trim(), text,
     answer: document.getElementById("qAns").value.trim(), points: Number(document.getElementById("qPts").value),
-    type, options: type === "scelta" ? opts.join("|") : "", awarded: {}
+            type, secs: Number(document.getElementById("qSecs").value) || 30,     options: type === "scelta" ? opts.join("|") : "", awarded: {}
   });
   ["qCat","qText","qAns","qOpts"].forEach(id => document.getElementById(id).value = "");
 }
@@ -140,7 +157,7 @@ function hostGame(){
   if (!n) return `<p class="muted">Aggiungi prima delle domande.</p>`;
   const ctrl = `
     <div class="card">
-      <span class="tag">Fase: ${h(c.phase)}</span>
+      <span class="tag">Fase: ${h(c.phase)}</span> <span class="tag">⏱ <span class="tick"></span></span>
       <div style="margin-top:8px">
         <button class="btn ghost" onclick="setPhase('iscrizione')">Iscrizioni aperte</button>
 <button class="btn ghost" onclick="setPhase('attesa')">Chiudi iscrizioni</button>
@@ -171,11 +188,13 @@ function hostGame(){
     <div class="card"><strong>Classifica</strong>${board()}</div>`;
 }
 function setPhase(p){ DB.ref("quiz/config/phase").set(p); }
-function startQ(){
-  const i = Math.min(Math.max(cfg().idx || 0, 0), qs().length - 1);
-  DB.ref("quiz/config").set({phase: "domanda", idx: i}).catch(e => alert("Errore: " + e.message));
+function goQ(i){
+  const l = qs(); if (!l.length) return;
+  i = Math.min(Math.max(i, 0), l.length - 1);
+  DB.ref("quiz/config").set({phase: "domanda", idx: i, start: Date.now(), secs: l[i].secs || 30});
 }
-function moveQ(d){ DB.ref("quiz/config").update({phase:"domanda", idx: cfg().idx + d}); }
+function startQ(){ goQ(cfg().idx || 0); }
+function moveQ(d){ goQ((cfg().idx || 0) + d); }
 function award(tid){
   const q = curQ();
   const on = q.awarded?.[tid];
@@ -195,7 +214,7 @@ function viewPlayer(){
   const q = curQ();
   if (!q) return head + `<div class="card"><p class="muted">In attesa della prima domanda.</p></div>`;
   const mine = ST.answers?.[myTeam]?.[q.id]?.value;
-  const locked = c.phase !== "domanda";
+  const locked = c.phase !== "domanda" || remaining() <= 0;
   let input;
   if (q.type === "prenota") {     input = mine ? `<p>Hai prenotato: rispondi a voce!</p>`       : `<button class="btn" style="width:100%;padding:30px;font-size:1.5rem" ${locked?'disabled':''} onclick="answer('Prenotato')">🔔 PRENOTATI</button>`;   } else if (q.type === "scelta") {
     input = q.options.split("|").filter(Boolean).map(o =>
@@ -205,7 +224,7 @@ function viewPlayer(){
       <button class="btn" ${locked?'disabled':''} onclick="answer(document.getElementById('pAns').value)">Invia risposta</button>`;
   }
   return head + `<div class="card">
-      <span class="tag">${q.points} pt · ${h(q.cat||"Generale")}</span>
+      <span class="tag">${q.points} pt · ${h(q.cat||"Generale")}</span> <span class="tag">⏱ <span class="tick"></span></span>
       <div class="big">${h(q.text)}</div>
       ${locked ? `<p class="muted">Risposte chiuse.</p>` : ""}
       ${mine ? `<p>La tua risposta: <strong>${h(mine)}</strong></p>` : ""}
