@@ -11,8 +11,8 @@
 :root{--bg:#f6f5f2;--card:#fff;--text:#1c1c1e;--accent:#5b3fd6;--muted:#777;--line:#e2e0da;--ok:#1e8e4e}
 @media (prefers-color-scheme: dark){:root{--bg:#17171a;--card:#222227;--text:#eee;--accent:#9b8cff;--muted:#999;--line:#333}}
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:16px;max-width:720px;margin:auto}
-h1{font-size:1.4rem;margin:0 0 12px}
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background-color:var(--bg);color:var(--text);padding:16px;max-width:720px;margin:auto;min-height:100vh;background-size:cover;background-position:center;background-attachment:fixed}
+h1{font-size:1.4rem;margin:0 0 12px;text-shadow:0 1px 3px rgba(0,0,0,.3)}
 nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
 nav button{flex:1;padding:10px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
 nav button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -39,12 +39,12 @@ input,select,textarea{width:100%;padding:10px;margin:4px 0 8px;border:1px solid 
 </style>
 </head>
 <body>
-<h1>🎲 Quiz Night</h1>
+<h1 id="title">🎲 Quiz Night</h1>
 <div id="app"></div>
 
 <script>
 /* CONFIGURAZIONE: sostituisci con l'URL del tuo database Firebase */
-const DB_URL = "https://quiz-aa578-default-rtdb.europe-west1.firebasedatabase.app/";
+const DB_URL = "https://IL-TUO-PROGETTO-default-rtdb.firebaseio.com";
 
 firebase.initializeApp({ databaseURL: DB_URL });
 const DB = firebase.database();
@@ -63,6 +63,7 @@ const cfg = () => ST.config || { phase: "iscrizione", idx: 0 };
 const qs = () => Object.entries(ST.questions || {}).map(([id,q]) => ({id, ...q})).sort((a,b) => a.order - b.order);
 const teams = () => Object.entries(ST.teams || {}).map(([id,t]) => ({id, ...t}));
 const curQ = () => { const l = qs(); return l[Math.min(Math.max(cfg().idx || 0, 0), l.length - 1)]; };
+const quizName = () => ST.settings?.name || "Quiz Night";
 function scores(){
   const m = {};
   teams().forEach(t => m[t.id] = 0);
@@ -105,7 +106,10 @@ setInterval(() => {
 /* ---------- render (preserva i valori degli input) ---------- */
 function render(){
   const keep = {};
-  document.querySelectorAll("#app input, #app textarea, #app select").forEach(e => { if (e.id) keep[e.id] = e.value; });
+  document.querySelectorAll("#app input, #app textarea, #app select").forEach(e => { if (e.id && e.type !== "file") keep[e.id] = e.value; });
+  document.getElementById("title").textContent = "🎲 " + quizName();
+  document.title = quizName();
+  document.body.style.backgroundImage = ST.settings?.bg ? `url("${ST.settings.bg}")` : "";
   const app = document.getElementById("app");
   if (IS_PLAYER) app.innerHTML = viewPlayer();
   else {
@@ -173,16 +177,51 @@ function hostTeams(){
 function toggleTeam(id){ DB.ref("quiz/teams/" + id + "/confirmed").set(!ST.teams[id].confirmed); }
 function delTeam(id){ DB.ref("quiz/teams/" + id).remove(); DB.ref("quiz/answers/" + id).remove(); }
 
+function settingsCard(){
+  return `<div class="card">
+    <strong>Impostazioni quiz</strong>
+    <input id="sName" placeholder="Nome del quiz" value="${h(ST.settings?.name || "")}">
+    <button class="btn" onclick="saveName()">Salva nome</button>
+    <label class="muted" style="display:block;margin-top:10px">Sfondo (JPG o PNG)</label>
+    <input type="file" accept="image/jpeg,image/png" onchange="loadBg(this)">
+    <button class="btn ghost" onclick="removeBg()">Rimuovi sfondo</button>
+  </div>`;
+}
+function saveName(){
+  const v = document.getElementById("sName").value.trim();
+  DB.ref("quiz/settings/name").set(v || "Quiz Night");
+}
+function removeBg(){ DB.ref("quiz/settings/bg").remove(); }
+function loadBg(input){
+  const f = input.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const sc = Math.min(1, 1600 / img.width);
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * sc);
+      cv.height = Math.round(img.height * sc);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      DB.ref("quiz/settings/bg").set(cv.toDataURL("image/jpeg", 0.75))
+        .then(() => alert("Sfondo salvato"))
+        .catch(e => alert("Errore: " + e.message));
+    };
+    img.src = r.result;
+  };
+  r.readAsDataURL(f);
+}
+
 function hostGame(){
   const c = cfg(), q = curQ(), n = qs().length;
-  if (!n) return `<p class="muted">Aggiungi prima delle domande.</p>`;
   const ctrl = `
     <div class="card">
       <span class="tag">Fase: ${h(c.phase)}</span> <span class="tag">⏱ <span class="tick"></span></span>
       <div style="margin-top:8px">
         <button class="btn ghost" onclick="setPhase('iscrizione')">Iscrizioni aperte</button>
         <button class="btn ghost" onclick="setPhase('attesa')">Chiudi iscrizioni</button>
-        <button class="btn" onclick="startQ()">Avvia domanda</button>
+        <button class="btn" onclick="startQ()" ${!n?'disabled':''}>Avvia domanda</button>
         <button class="btn ghost" onclick="setPhase('risposte')">Chiudi risposte</button>
         <button class="btn ghost" onclick="setPhase('classifica')">Classifica</button>
       </div>
@@ -191,6 +230,7 @@ function hostGame(){
         <button class="btn ghost" onclick="moveQ(1)" ${c.idx>=n-1?'disabled':''}>Successiva →</button>
       </div>
     </div>`;
+  if (!n) return settingsCard() + ctrl + `<p class="muted">Aggiungi prima delle domande.</p>`;
   const at = t => ST.answers?.[t.id]?.[q.id]?.t ?? 9e15;
   const opts = q.type === "scelta" ? `<p class="muted">Opzioni: ${h(q.options)}</p>` : "";
   const answers = teams().filter(t => t.confirmed).sort((a,b) => at(a) - at(b)).map((t,i) => {
@@ -201,7 +241,7 @@ function hostGame(){
     return `<div class="row"><div><strong>${h(t.name)}</strong>${info ? ` <span class="tag">${info}</span>` : ""}<br><span class="muted">${a ? h(a) : "— nessuna risposta"}</span></div>
       <button class="btn ${on?'ok':'ghost'}" onclick="award('${t.id}')">${on?'✓ punti':'+ '+q.points}</button></div>`;
   }).join("") || `<p class="muted">Nessuna squadra confermata.</p>`;
-  return ctrl + questionList() + `
+  return settingsCard() + ctrl + questionList() + `
     <div class="card">
       <span class="tag">Domanda ${(c.idx||0)+1}/${n} · ${h(q.cat||"Generale")} · ${q.points} pt · durata ${q.secs||30} s</span>
       <div class="big">${h(q.text)}</div>
