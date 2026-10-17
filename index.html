@@ -49,10 +49,10 @@ const DB_URL = "https://quiz-aa578-default-rtdb.europe-west1.firebasedatabase.ap
 firebase.initializeApp({ databaseURL: DB_URL });
 const DB = firebase.database();
 const IS_PLAYER = new URLSearchParams(location.search).has("p");
-const HOST_TABS = ["Domande", "Squadre", "Gioco", "QR"];
+const HOST_TABS = ["Gioco", "Domande", "Squadre", "QR"];
 
 let ST = {};
-let tab = "Domande";
+let tab = "Gioco";
 let myTeam = localStorage.getItem("qnTeam") || "";
 let doneKey = null;
 
