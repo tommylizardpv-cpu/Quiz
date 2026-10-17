@@ -230,8 +230,9 @@ function viewPlayer(){
     pad = mine ? `<p class="big">✅ Sei prenotato: rispondi a voce!</p>`
       : `<button class="btn big-opt" ${dis} onclick="answer('Prenotato')">🔔 PRENOTATI</button>`;
   } else if (q.type === "scelta") {
-    pad = q.options.split("|").filter(Boolean).map(o =>
-      `<button class="btn big-opt ${mine === o ? 'ok' : 'ghost'}" ${dis} data-v="${h(o)}" onclick="answer(this.dataset.v)">${h(o)}</button>`).join("");
+        const COLS = ["#e74c3c","#2980b9","#f1c40f","#27ae60","#8e44ad","#e67e22"];
+    pad = q.options.split("|").filter(Boolean).map((o,i) =>
+      `<button class="big-opt" style="background:${COLS[i%COLS.length]};color:${i%COLS.length===2?'#000':'#fff'};font-size:1.4rem;padding:28px;font-weight:600;border-radius:12px;border:${mine===o?'4px solid #000':'0'};opacity:${dis?'.5':'1'}" ${dis} data-v="${h(o)}" onclick="answer(this.dataset.v)">${h(o)}</button>`).join("");
   } else {
     pad = `<input id="pAns" placeholder="La tua risposta" ${dis}>
       <button class="btn big-opt" ${dis} onclick="answer(document.getElementById('pAns').value)">Invia risposta</button>`;
