@@ -170,7 +170,10 @@ function hostGame(){
     <div class="card"><strong>Classifica</strong>${board()}</div>`;
 }
 function setPhase(p){ DB.ref("quiz/config/phase").set(p); }
-function startQ(){ DB.ref("quiz/config").update({phase:"domanda", idx: cfg().idx}); }
+function startQ(){
+  const i = Math.min(Math.max(cfg().idx || 0, 0), qs().length - 1);
+  DB.ref("quiz/config").set({phase: "domanda", idx: i}).catch(e => alert("Errore: " + e.message));
+}
 function moveQ(d){ DB.ref("quiz/config").update({phase:"domanda", idx: cfg().idx + d}); }
 function award(tid){
   const q = curQ();
