@@ -179,10 +179,12 @@ function hostGame(){
     </div>`;
   const at = t => ST.answers?.[t.id]?.[q.id]?.t ?? 9e15;
   const opts = q.type === "scelta" ? `<p class="muted">Opzioni: ${h(q.options)}</p>` : "";
-  const answers = teams().filter(t => t.confirmed).sort((a,b) => at(a) - at(b)).map(t => {
+  const answers = teams().filter(t => t.confirmed).sort((a,b) => at(a) - at(b)).map((t,i) => {
     const a = ST.answers?.[t.id]?.[q.id]?.value;
     const on = q.awarded?.[t.id];
-    return `<div class="row"><div><strong>${h(t.name)}</strong><br><span class="muted">${a ? h(a) : "— nessuna risposta"}</span></div>
+    const tm = ST.answers?.[t.id]?.[q.id]?.t;
+    const info = q.type === "prenota" && tm ? `${i+1}° · ${((tm - (c.start || tm)) / 1000).toFixed(2)} s` : "";
+    return `<div class="row"><div><strong>${h(t.name)}</strong>${info ? ` <span class="tag">${info}</span>` : ""}<br><span class="muted">${a ? h(a) : "— nessuna risposta"}</span></div>
       <button class="btn ${on?'ok':'ghost'}" onclick="award('${t.id}')">${on?'✓ punti':'+ '+q.points}</button></div>`;
   }).join("") || `<p class="muted">Nessuna squadra confermata.</p>`;
   return ctrl + `
