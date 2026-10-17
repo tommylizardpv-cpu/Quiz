@@ -128,7 +128,7 @@ function hostQuestions(){
     <select id="qType"><option value="testo">Risposta libera (scritta)</option><option value="scelta">Scelta multipla</option><option value="prenota">Prenotazione (risposta a voce)</option></select>
     <input id="qOpts" placeholder="Opzioni separate da virgola (solo scelta multipla)">
     <select id="qPts"><option value="1">1 punto</option><option value="2" selected>2 punti</option><option value="3">3 punti</option></select>
-    <input id="qSecs" type="number" min="5" value="30" placeholder="Secondi per rispondere">
+    <label class="muted">Durata della risposta</label>     <select id="qSecs"><option value="10">10 secondi</option><option value="20">20 secondi</option><option value="30" selected>30 secondi</option><option value="60">1 minuto</option><option value="90">1 minuto e mezzo</option><option value="120">2 minuti</option></select>
     <button class="btn" onclick="addQ()">Aggiungi</button>
   </div>
   <div class="card">${list}</div>`;
@@ -141,7 +141,7 @@ function addQ(){
   DB.ref("quiz/questions/" + uid()).set({
     order: Date.now(), cat: document.getElementById("qCat").value.trim(), text,
     answer: document.getElementById("qAns").value.trim(), points: Number(document.getElementById("qPts").value),
-    type, secs: Number(document.getElementById("qSecs").value) || 30,
+    type, secs: Math.min(600, Math.max(5, Number(document.getElementById("qSecs").value) || 30)),
     options: type === "scelta" ? opts.join("|") : "", awarded: {}
   });
   ["qCat","qText","qAns","qOpts"].forEach(id => document.getElementById(id).value = "");
