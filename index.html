@@ -143,6 +143,7 @@ function hostGame(){
       <span class="tag">Fase: ${h(c.phase)}</span>
       <div style="margin-top:8px">
         <button class="btn ghost" onclick="setPhase('iscrizione')">Iscrizioni aperte</button>
+<button class="btn ghost" onclick="setPhase('attesa')">Chiudi iscrizioni</button>
         <button class="btn" onclick="startQ()" ${!n?'disabled':''}>Avvia domanda</button>
         <button class="btn ghost" onclick="setPhase('risposte')">Chiudi risposte</button>
         <button class="btn ghost" onclick="setPhase('classifica')">Classifica</button>
@@ -188,7 +189,8 @@ function viewPlayer(){
   const c = cfg();
   const head = `<div class="card"><strong>${h(me.name)}</strong></div>`;
   if (!me.confirmed) return head + `<div class="card"><p>Prenotazione inviata. Attendi la conferma del presentatore.</p></div>`;
-  if (c.phase === "iscrizione") return head + `<div class="card"><p>Iscrizioni chiuse a breve. Attendi l'inizio del quiz.</p></div>`;
+  if (c.phase === "iscrizione") return head + `<div class="card"><p>Iscrizioni aperte. Attendi l'inizio del quiz.</p></div>`;
+  if (c.phase === "attesa") return head + `<div class="card"><p>Iscrizioni chiuse. Attendi l'inizio del quiz.</p></div>`;
   if (c.phase === "classifica") return head + `<div class="card"><strong>Classifica</strong>${board(myTeam)}</div>`;
   const q = curQ();
   if (!q) return head + `<div class="card"><p class="muted">In attesa della prima domanda.</p></div>`;
