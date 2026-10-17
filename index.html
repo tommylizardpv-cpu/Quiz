@@ -23,6 +23,7 @@ input,select,textarea{width:100%;padding:10px;margin:4px 0 8px;border:1px solid 
 .btn.danger{background:#c0392b}
 .btn.ok{background:var(--ok)}
 .btn:disabled{opacity:.4}
+.big-opt{display:block;width:100%;padding:22px;font-size:1.2rem;margin:8px 0}
 .muted{color:var(--muted);font-size:.9rem}
 .row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
@@ -33,25 +34,44 @@ input,select,textarea{width:100%;padding:10px;margin:4px 0 8px;border:1px solid 
 </style>
 </head>
 <body>
-<h1 id="title">🎲 Quiz Night</h1>
+<h1>🎲 Quiz Night</h1>
 <div id="app"></div>
 
 <script>
 /* CONFIGURAZIONE: sostituisci con l'URL del tuo database Firebase */
-const DB_URL = "https://quiz-aa578-default-rtdb.europe-west1.firebasedatabase.app";
+const DB_URL = "https://quiz-aa578-default-rtdb.europe-west1.firebasedatabase.app/";
 
 firebase.initializeApp({ databaseURL: DB_URL });
 const DB = firebase.database();
 const IS_PLAYER = new URLSearchParams(location.search).has("p");
 const HOST_TABS = ["Domande", "Squadre", "Gioco", "QR"];
 
-let ST = {};              // stato condiviso letto da Firebase
+let ST = {};
 let tab = "Domande";
 let myTeam = localStorage.getItem("qnTeam") || "";
-
-DB.ref("quiz").on("value", s => { ST = s.val() || {}; render(); });
-
 let doneKey = null;
+
+/* ---------- utilità ---------- */
+const h = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const cfg = () => ST.config || { phase: "iscrizione", idx: 0 };
+const qs = () => Object.entries(ST.questions || {}).map(([id,q]) => ({id, ...q})).sort((a,b) => a.order - b.order);
+const teams = () => Object.entries(ST.teams || {}).map(([id,t]) => ({id, ...t}));
+const curQ = () => { const l = qs(); return l[Math.min(Math.max(cfg().idx || 0, 0), l.length - 1)]; };
+function scores(){
+  const m = {};
+  teams().forEach(t => m[t.id] = 0);
+  qs().forEach(q => Object.keys(q.awarded || {}).forEach(tid => { if (tid in m) m[tid] += Number(q.points) || 0; }));
+  return m;
+}
+function board(me){
+  const sc = scores();
+  return teams().filter(t => t.confirmed).sort((a,b) => sc[b.id] - sc[a.id]).map(t =>
+    `<div class="row ${t.id===me?'me':''}"><span>${h(t.name)}</span><strong>${sc[t.id]}</strong></div>`).join("")
+    || `<p class="muted">Nessuna squadra confermata.</p>`;
+}
+
+/* ---------- tempo ---------- */
 function remaining(){
   const c = cfg();
   if (c.phase !== "domanda" || !c.start) return null;
@@ -68,27 +88,8 @@ setInterval(() => {
     else DB.ref("quiz/config/phase").set("risposte");
   }
 }, 500);
-  /* ---------- utilità ---------- */
-const h = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-const cfg = () => ST.config || { phase: "iscrizione", idx: 0 };
-const qs = () => Object.entries(ST.questions || {}).map(([id,q]) => ({id, ...q})).sort((a,b) => a.order - b.order);
-const teams = () => Object.entries(ST.teams || {}).map(([id,t]) => ({id, ...t}));
-const curQ = () => qs()[cfg().idx];
-function scores(){
-  const m = {};
-  teams().forEach(t => m[t.id] = 0);
-  qs().forEach(q => Object.keys(q.awarded || {}).forEach(tid => { if (tid in m) m[tid] += Number(q.points) || 0; }));
-  return m;
-}
-function board(me){
-  const sc = scores();
-  return teams().filter(t => t.confirmed).sort((a,b) => sc[b.id] - sc[a.id]).map(t =>
-    `<div class="row ${t.id===me?'me':''}"><span>${h(t.name)}</span><strong>${sc[t.id]}</strong></div>`).join("")
-    || `<p class="muted">Nessuna squadra confermata.</p>`;
-}
 
-/* ---------- render generale (preserva i valori degli input) ---------- */
+/* ---------- render (preserva i valori degli input) ---------- */
 function render(){
   const keep = {};
   document.querySelectorAll("#app input, #app textarea, #app select").forEach(e => { if (e.id) keep[e.id] = e.value; });
@@ -102,7 +103,11 @@ function render(){
 }
 function setTab(t){ tab = t; render(); }
 
-/* ---------- HOST ---------- */
+DB.ref("quiz").on("value", s => { ST = s.val() || {}; render(); },
+  e => { document.getElementById("app").innerHTML = "<p>Errore database: " + e.message + "</p>"; });
+if (DB_URL.includes("IL-TUO")) document.getElementById("app").innerHTML = "<p>Devi inserire l'URL del tuo database Firebase in DB_URL.</p>";
+
+/* ---------- PRESENTATORE ---------- */
 function viewHost(){
   if (tab === "Domande") return hostQuestions();
   if (tab === "Squadre") return hostTeams();
@@ -111,7 +116,7 @@ function viewHost(){
 }
 function hostQuestions(){
   const list = qs().map(q => `
-    <div class="row"><div><span class="tag">${h(q.cat||"Generale")} · ${q.points} pt · ${q.type==="scelta"?"scelta multipla":"risposta libera"}</span><br>${h(q.text)}
+    <div class="row"><div><span class="tag">${h(q.cat||"Generale")} · ${q.points} pt · ${q.secs||30} s · ${q.type==="scelta"?"scelta multipla":q.type==="prenota"?"prenotazione a voce":"risposta libera"}</span><br>${h(q.text)}
     <div class="muted">Risposta: ${h(q.answer)}</div></div>
     <button class="btn danger" onclick="delQ('${q.id}')">✕</button></div>`).join("") || `<p class="muted">Nessuna domanda.</p>`;
   return `
@@ -123,7 +128,8 @@ function hostQuestions(){
     <select id="qType"><option value="testo">Risposta libera (scritta)</option><option value="scelta">Scelta multipla</option><option value="prenota">Prenotazione (risposta a voce)</option></select>
     <input id="qOpts" placeholder="Opzioni separate da virgola (solo scelta multipla)">
     <select id="qPts"><option value="1">1 punto</option><option value="2" selected>2 punti</option><option value="3">3 punti</option></select>
-    <input id="qSecs" type="number" min="5" value="30" placeholder="Secondi per rispondere">     <button class="btn" onclick="addQ()">Aggiungi</button>
+    <input id="qSecs" type="number" min="5" value="30" placeholder="Secondi per rispondere">
+    <button class="btn" onclick="addQ()">Aggiungi</button>
   </div>
   <div class="card">${list}</div>`;
 }
@@ -135,7 +141,8 @@ function addQ(){
   DB.ref("quiz/questions/" + uid()).set({
     order: Date.now(), cat: document.getElementById("qCat").value.trim(), text,
     answer: document.getElementById("qAns").value.trim(), points: Number(document.getElementById("qPts").value),
-            type, secs: Number(document.getElementById("qSecs").value) || 30,     options: type === "scelta" ? opts.join("|") : "", awarded: {}
+    type, secs: Number(document.getElementById("qSecs").value) || 30,
+    options: type === "scelta" ? opts.join("|") : "", awarded: {}
   });
   ["qCat","qText","qAns","qOpts"].forEach(id => document.getElementById(id).value = "");
 }
@@ -149,7 +156,7 @@ function hostTeams(){
     <button class="btn danger" onclick="delTeam('${t.id}')">✕</button></div></div>`).join("") || `<p class="muted">Nessuna prenotazione. Max 10 concorrenti consigliati.</p>`;
   return `<div class="card">${list}</div>`;
 }
-function toggleTeam(id){ const t = ST.teams[id]; DB.ref("quiz/teams/" + id + "/confirmed").set(!t.confirmed); }
+function toggleTeam(id){ DB.ref("quiz/teams/" + id + "/confirmed").set(!ST.teams[id].confirmed); }
 function delTeam(id){ DB.ref("quiz/teams/" + id).remove(); DB.ref("quiz/answers/" + id).remove(); }
 
 function hostGame(){
@@ -160,8 +167,8 @@ function hostGame(){
       <span class="tag">Fase: ${h(c.phase)}</span> <span class="tag">⏱ <span class="tick"></span></span>
       <div style="margin-top:8px">
         <button class="btn ghost" onclick="setPhase('iscrizione')">Iscrizioni aperte</button>
-<button class="btn ghost" onclick="setPhase('attesa')">Chiudi iscrizioni</button>
-        <button class="btn" onclick="startQ()" ${!n?'disabled':''}>Avvia domanda</button>
+        <button class="btn ghost" onclick="setPhase('attesa')">Chiudi iscrizioni</button>
+        <button class="btn" onclick="startQ()">Avvia domanda</button>
         <button class="btn ghost" onclick="setPhase('risposte')">Chiudi risposte</button>
         <button class="btn ghost" onclick="setPhase('classifica')">Classifica</button>
       </div>
@@ -170,9 +177,9 @@ function hostGame(){
         <button class="btn ghost" onclick="moveQ(1)" ${c.idx>=n-1?'disabled':''}>Successiva →</button>
       </div>
     </div>`;
-  if (!q) return ctrl;
+  const at = t => ST.answers?.[t.id]?.[q.id]?.t ?? 9e15;
   const opts = q.type === "scelta" ? `<p class="muted">Opzioni: ${h(q.options)}</p>` : "";
-    const at = t => ST.answers?.[t.id]?.[q.id]?.t ?? 9e15;   const answers = teams().filter(t => t.confirmed).sort((a, b) => at(a) - at(b)).map(t => {
+  const answers = teams().filter(t => t.confirmed).sort((a,b) => at(a) - at(b)).map(t => {
     const a = ST.answers?.[t.id]?.[q.id]?.value;
     const on = q.awarded?.[t.id];
     return `<div class="row"><div><strong>${h(t.name)}</strong><br><span class="muted">${a ? h(a) : "— nessuna risposta"}</span></div>
@@ -180,7 +187,7 @@ function hostGame(){
   }).join("") || `<p class="muted">Nessuna squadra confermata.</p>`;
   return ctrl + `
     <div class="card">
-      <span class="tag">Domanda ${c.idx+1}/${n} · ${h(q.cat||"Generale")} · ${q.points} pt</span>
+      <span class="tag">Domanda ${(c.idx||0)+1}/${n} · ${h(q.cat||"Generale")} · ${q.points} pt</span>
       <div class="big">${h(q.text)}</div>
       <p class="muted">Risposta corretta: <strong>${h(q.answer)}</strong></p>${opts}
     </div>
@@ -201,35 +208,36 @@ function award(tid){
   DB.ref("quiz/questions/" + q.id + "/awarded/" + tid).set(on ? null : true);
 }
 
-/* ---------- CONCORRENTE ---------- */
+/* ---------- CONCORRENTE: pulsantiera ---------- */
 function viewPlayer(){
   const me = myTeam && ST.teams?.[myTeam];
   if (!myTeam || !me) return bookingForm();
   const c = cfg();
   const head = `<div class="card"><strong>${h(me.name)}</strong></div>`;
-  if (!me.confirmed) return head + `<div class="card"><p>Prenotazione inviata. Attendi la conferma del presentatore.</p></div>`;
-  if (c.phase === "iscrizione") return head + `<div class="card"><p>Iscrizioni aperte. Attendi l'inizio del quiz.</p></div>`;
-  if (c.phase === "attesa") return head + `<div class="card"><p>Iscrizioni chiuse. Attendi l'inizio del quiz.</p></div>`;
-   if (c.phase === "risposte") return `<div style="position:fixed;inset:0;background:#000;z-index:999"></div>`;
+  const wait = t => head + `<div class="card" style="text-align:center"><p>${t}</p></div>`;
+  if (!me.confirmed) return wait("Prenotazione inviata, attendi la conferma.");
+  if (c.phase === "iscrizione" || c.phase === "attesa") return wait("Attendi l'inizio del quiz.");
+  if (c.phase === "risposte") return `<div style="position:fixed;inset:0;background:#000;z-index:999"></div>`;
+  if (c.phase === "classifica") return head + `<div class="card"><strong>Classifica</strong>${board(myTeam)}</div>`;
   const q = curQ();
-  if (!q) return head + `<div class="card"><p class="muted">In attesa della prima domanda.</p></div>`;
+  if (!q) return wait("In attesa della prima domanda.");
   const mine = ST.answers?.[myTeam]?.[q.id]?.value;
   const locked = c.phase !== "domanda" || remaining() <= 0;
-  let input;
-  if (q.type === "prenota") {     input = mine ? `<p>Hai prenotato: rispondi a voce!</p>`       : `<button class="btn" style="width:100%;padding:30px;font-size:1.5rem" ${locked?'disabled':''} onclick="answer('Prenotato')">🔔 PRENOTATI</button>`;   } else if (q.type === "scelta") {
-    input = q.options.split("|").filter(Boolean).map(o =>
-      `<button class="btn ${mine===o?'ok':'ghost'}" ${locked?'disabled':''} onclick="answer(${JSON.stringify(o).replace(/"/g,'&quot;')})">${h(o)}</button>`).join("");
+  const dis = locked ? "disabled" : "";
+  const timer = `<div class="tag" style="font-size:1.1rem">⏱ <span class="tick"></span></div>`;
+  let pad;
+  if (q.type === "prenota") {
+    pad = mine ? `<p class="big">✅ Sei prenotato: rispondi a voce!</p>`
+      : `<button class="btn big-opt" ${dis} onclick="answer('Prenotato')">🔔 PRENOTATI</button>`;
+  } else if (q.type === "scelta") {
+    pad = q.options.split("|").filter(Boolean).map(o =>
+      `<button class="btn big-opt ${mine === o ? 'ok' : 'ghost'}" ${dis} data-v="${h(o)}" onclick="answer(this.dataset.v)">${h(o)}</button>`).join("");
   } else {
-    input = `<input id="pAns" placeholder="La tua risposta" ${locked?'disabled':''}>
-      <button class="btn" ${locked?'disabled':''} onclick="answer(document.getElementById('pAns').value)">Invia risposta</button>`;
+    pad = `<input id="pAns" placeholder="La tua risposta" ${dis}>
+      <button class="btn big-opt" ${dis} onclick="answer(document.getElementById('pAns').value)">Invia risposta</button>`;
   }
-  return head + `<div class="card">
-      <span class="tag">${q.points} pt · ${h(q.cat||"Generale")}</span> <span class="tag">⏱ <span class="tick"></span></span>
-      <div class="big">${h(q.text)}</div>
-      ${locked ? `<p class="muted">Risposte chiuse.</p>` : ""}
-      ${mine ? `<p>La tua risposta: <strong>${h(mine)}</strong></p>` : ""}
-      ${input}
-    </div>`;
+  const sent = mine && q.type !== "prenota" ? `<p>Inviata: <strong>${h(mine)}</strong></p>` : "";
+  return head + `<div class="card" style="text-align:center">${timer}${sent}${pad}</div>`;
 }
 function answer(v){
   v = String(v ?? "").trim();
@@ -261,6 +269,8 @@ function makeQR(){
   if (typeof QRCode === "undefined") { el.textContent = "QR non disponibile"; return; }
   new QRCode(el, { text: location.href.split("?")[0] + "?p=1", width: 220, height: 220 });
 }
+
+render();
 </script>
 </body>
 </html>
