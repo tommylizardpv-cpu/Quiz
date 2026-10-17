@@ -30,7 +30,12 @@ input,select,textarea{width:100%;padding:10px;margin:4px 0 8px;border:1px solid 
 .tag{font-size:.75rem;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
 .big{font-size:1.25rem;font-weight:600;margin:8px 0}
 .me{outline:2px solid var(--accent)}
-.pod{display:flex;align-items:center;gap:12px;padding:16px;margin:8px 0;border-radius:12px;background:var(--card);border:1px solid var(--line);font-size:1.3rem} .pos{width:48px;text-align:center;font-size:1.6rem} .pname{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis} .ppts{font-size:1.8rem;font-weight:800;color:var(--accent)} .pme{outline:3px solid var(--accent)}padding:12px;display:inline-block;border-radius:8px}
+.pod{display:flex;align-items:center;gap:12px;padding:16px;margin:8px 0;border-radius:12px;background:var(--card);border:1px solid var(--line);font-size:1.3rem}
+.pos{width:48px;text-align:center;font-size:1.6rem}
+.pname{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.ppts{font-size:1.8rem;font-weight:800;color:var(--accent)}
+.pme{outline:3px solid var(--accent)}
+#qr{background:#fff;padding:12px;display:inline-block;border-radius:8px}
 </style>
 </head>
 <body>
@@ -39,7 +44,7 @@ input,select,textarea{width:100%;padding:10px;margin:4px 0 8px;border:1px solid 
 
 <script>
 /* CONFIGURAZIONE: sostituisci con l'URL del tuo database Firebase */
-const DB_URL = "https://quiz-aa578-default-rtdb.europe-west1.firebasedatabase.app/";
+const DB_URL = "https://IL-TUO-PROGETTO-default-rtdb.firebaseio.com";
 
 firebase.initializeApp({ databaseURL: DB_URL });
 const DB = firebase.database();
@@ -69,6 +74,14 @@ function board(me){
   return teams().filter(t => t.confirmed).sort((a,b) => sc[b.id] - sc[a.id]).map(t =>
     `<div class="row ${t.id===me?'me':''}"><span>${h(t.name)}</span><strong>${sc[t.id]}</strong></div>`).join("")
     || `<p class="muted">Nessuna squadra confermata.</p>`;
+}
+function podium(me){
+  const sc = scores();
+  const medal = ["🥇","🥈","🥉"];
+  const rows = teams().filter(t => t.confirmed).sort((a,b) => sc[b.id] - sc[a.id]);
+  return `<h2 style="text-align:center;margin:8px 0">🏆 Classifica</h2>` + (rows.map((t,i) =>
+    `<div class="pod ${t.id===me?'pme':''}"><span class="pos">${medal[i]||i+1}</span><span class="pname">${h(t.name)}</span><span class="ppts">${sc[t.id]}</span></div>`).join("")
+    || `<p style="text-align:center">Nessuna squadra confermata.</p>`);
 }
 
 /* ---------- tempo ---------- */
@@ -128,7 +141,8 @@ function hostQuestions(){
     <select id="qType"><option value="testo">Risposta libera (scritta)</option><option value="scelta">Scelta multipla</option><option value="prenota">Prenotazione (risposta a voce)</option></select>
     <input id="qOpts" placeholder="Opzioni separate da virgola (solo scelta multipla)">
     <select id="qPts"><option value="1">1 punto</option><option value="2" selected>2 punti</option><option value="3">3 punti</option></select>
-    <label class="muted">Durata della risposta</label>     <select id="qSecs"><option value="10">10 secondi</option><option value="20">20 secondi</option><option value="30" selected>30 secondi</option><option value="60">1 minuto</option><option value="90">1 minuto e mezzo</option><option value="120">2 minuti</option></select>
+    <label class="muted">Durata della risposta</label>
+    <select id="qSecs"><option value="10">10 secondi</option><option value="20">20 secondi</option><option value="30" selected>30 secondi</option><option value="60">1 minuto</option><option value="90">1 minuto e mezzo</option><option value="120">2 minuti</option></select>
     <button class="btn" onclick="addQ()">Aggiungi</button>
   </div>
   <div class="card">${list}</div>`;
@@ -189,14 +203,25 @@ function hostGame(){
   }).join("") || `<p class="muted">Nessuna squadra confermata.</p>`;
   return ctrl + questionList() + `
     <div class="card">
-      <span class="tag">Domanda ${(c.idx||0)+1}/${n} · ${h(q.cat||"Generale")} · ${q.points} pt</span>
+      <span class="tag">Domanda ${(c.idx||0)+1}/${n} · ${h(q.cat||"Generale")} · ${q.points} pt · durata ${q.secs||30} s</span>
       <div class="big">${h(q.text)}</div>
       <p class="muted">Risposta corretta: <strong>${h(q.answer)}</strong></p>${opts}
     </div>
     <div class="card"><strong>Risposte</strong>${answers}</div>
     <div class="card"><strong>Classifica</strong>${board()}</div>`;
 }
-function podium(me){   const sc = scores();   const medal = ["🥇","🥈","🥉"];   const rows = teams().filter(t => t.confirmed).sort((a,b) => sc[b.id] - sc[a.id]);   return `<h2 style="text-align:center;margin:8px 0">🏆 Classifica</h2>` + (rows.map((t,i) =>     `<div class="pod ${t.id===me?'pme':''}"><span class="pos">${medal[i]||i+1}</span><span class="pname">${h(t.name)}</span><span class="ppts">${sc[t.id]}</span></div>`).join("")     || `<p style="text-align:center">Nessuna squadra confermata.</p>`); } function selQ(i){ DB.ref("quiz/config").set({phase: "attesa", idx: i}); } function questionList(){   const c = cfg();   return `<div class="card"><strong>Domande</strong>${qs().map((x,i) =>     `<button class="btn ${i===(c.idx||0)?'':'ghost'}" style="display:block;width:100%;text-align:left;margin:4px 0" onclick="selQ(${i})">${i+1}. ${h(x.text).slice(0,60)} · ${x.secs||30} s</button>`   ).join("")}</div>`; }
+function questionList(){
+  const c = cfg();
+  return `<div class="card"><strong>Domande</strong>${qs().map((x,i) =>
+    `<button class="btn ${i===(c.idx||0)?'':'ghost'}" style="display:block;width:100%;text-align:left;margin:4px 0" onclick="selQ(${i})">${i+1}. ${h(x.text).slice(0,60)} · ${x.secs||30} s</button>`
+  ).join("")}</div>`;
+}
+function selQ(i){ DB.ref("quiz/config").set({phase: "attesa", idx: i}); }
+function setPhase(p){
+  DB.ref("quiz/config/phase").set(p)
+    .then(() => alert("Fase cambiata in: " + p))
+    .catch(e => alert("Errore Firebase: " + e.message));
+}
 function goQ(i){
   const l = qs(); if (!l.length) return;
   i = Math.min(Math.max(i, 0), l.length - 1);
@@ -232,7 +257,7 @@ function viewPlayer(){
     pad = mine ? `<p class="big">✅ Sei prenotato: rispondi a voce!</p>`
       : `<button class="btn big-opt" ${dis} onclick="answer('Prenotato')">🔔 PRENOTATI</button>`;
   } else if (q.type === "scelta") {
-        const COLS = ["#e74c3c","#2980b9","#f1c40f","#27ae60","#8e44ad","#e67e22"];
+    const COLS = ["#e74c3c","#2980b9","#f1c40f","#27ae60","#8e44ad","#e67e22"];
     pad = q.options.split("|").filter(Boolean).map((o,i) =>
       `<button class="big-opt" style="background:${COLS[i%COLS.length]};color:${i%COLS.length===2?'#000':'#fff'};font-size:1.4rem;padding:28px;font-weight:600;border-radius:12px;border:${mine===o?'4px solid #000':'0'};opacity:${dis?'.5':'1'}" ${dis} data-v="${h(o)}" onclick="answer(this.dataset.v)">${h(o)}</button>`).join("");
   } else {
