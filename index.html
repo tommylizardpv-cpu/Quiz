@@ -119,6 +119,7 @@ body.proj h1{display:none}
 .pj-pod .ppts{font-family:var(--comic-font);font-weight:400;color:var(--red)}
 body.proj .qr{border:.2em solid var(--ink);box-shadow:.3em .3em 0 var(--ink)}
 .pj-fs{position:fixed;bottom:1vh;right:1vw;opacity:.4;font-size:12px}
+.pj-snd{position:fixed;bottom:1vh;left:1vw;font-size:14px;font-weight:700;background:var(--yellow);border:2px solid var(--ink);border-radius:6px;padding:4px 10px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -135,8 +136,24 @@ const DB_URL = "https://quiz-aa578-default-rtdb.europe-west1.firebasedatabase.ap
 const PARAMS = new URLSearchParams(location.search);
 /* ?demo: tutto resta nel browser (localStorage), utile per provare senza toccare Firebase */
 const DEMO = PARAMS.has("demo");
-const IS_PLAYER = PARAMS.has("p");
+/* L'indirizzo senza parametri è quello dei concorrenti. Il presentatore entra con ?regia=<parola segreta>:
+   qui c'è solo l'impronta della parola, così leggere il codice non basta a scoprirla. In modalità prova basta ?regia */
+const REGIA_HASH = "105ekgnjmg7";
+const hashWord = s => {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (const ch of String(s).trim().toLowerCase()) {
+    const c = ch.codePointAt(0);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+};
 const IS_PROJ = PARAMS.has("proiettore");
+const WANTS_HOST = !IS_PROJ && PARAMS.has("regia");
+const IS_HOST = WANTS_HOST && (DEMO || hashWord(PARAMS.get("regia")) === REGIA_HASH);
+const IS_PLAYER = !IS_HOST && !IS_PROJ;
 const HOST_TABS = ["Gioco", "Domande", "Squadre", "QR"];
 
 /* finto database con la stessa interfaccia di Firebase usata qui; le schede dello stesso browser si sincronizzano */
@@ -280,7 +297,7 @@ setInterval(() => {
   if (r <= 0 && doneKey !== cfg().start) {
     doneKey = cfg().start;
     if (IS_PLAYER) render();
-    else if (!IS_PROJ) DB.ref("quiz/config/phase").set("risposte");
+    else if (IS_HOST) DB.ref("quiz/config/phase").set("risposte");
   }
 }, 500);
 
@@ -293,6 +310,7 @@ function render(){
   document.body.classList.toggle("proj", IS_PROJ);
   const app = document.getElementById("app");
   if (IS_PROJ) app.innerHTML = viewProj();
+  else if (WANTS_HOST && !IS_HOST) app.innerHTML = `<div class="card" style="text-align:center"><p class="big">🔒 Parola segreta sbagliata</p><p>Controlla l'indirizzo del presentatore: <code>?regia=</code> seguito dalla parola segreta.</p></div>`;
   else if (IS_PLAYER) app.innerHTML = viewPlayer();
   else app.innerHTML = `<nav>${HOST_TABS.map(t => `<button class="${t===tab?'on':''}" onclick="setTab('${t}')">${t}</button>`).join("")}</nav><div id="main">${viewHost()}</div>`;
   makeQR();
@@ -312,15 +330,82 @@ if (IS_PROJ) {
   addEventListener("resize", fitProj);
   document.fonts?.ready.then(fitProj);
 }
+/* proiettore: tromba a ogni prenotazione (fanfara alla prima, una nota alle successive) e gong quando le risposte si chiudono.
+   Il browser blocca i suoni finché non si clicca o si preme un tasto sulla pagina */
+let AC = null, buzzSeen = { key: "", n: 0 }, lastQ = { id: "", phase: "" };
+const soundOn = () => AC?.state === "running";
+function unlockSound(){
+  try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  if (!soundOn()) AC.resume().then(render, () => {});
+}
+/* ottone: dente di sega con un filtro che si apre all'attacco, vibrato sulle note lunghe */
+function trumpet(first){
+  if (!soundOn()) return;
+  const out = AC.createGain();
+  out.gain.value = first ? 0.35 : 0.25;
+  out.connect(AC.destination);
+  let t = AC.currentTime;
+  (first ? [[523, .13], [523, .13], [523, .13], [784, .7]] : [[784, .35]]).forEach(([fr, d]) => {
+    const o = AC.createOscillator(), filt = AC.createBiquadFilter(), g = AC.createGain(), lfo = AC.createOscillator(), lg = AC.createGain();
+    o.type = "sawtooth"; o.frequency.value = fr;
+    lfo.frequency.value = 5.5; lg.gain.value = d > .3 ? 6 : 0; lfo.connect(lg).connect(o.frequency);
+    filt.type = "lowpass"; filt.Q.value = 2;
+    filt.frequency.setValueAtTime(400, t);
+    filt.frequency.exponentialRampToValueAtTime(3200, t + .05);
+    filt.frequency.exponentialRampToValueAtTime(1800, t + d);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(1, t + .03);
+    g.gain.setValueAtTime(1, t + d - .05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d + .08);
+    o.connect(filt).connect(g).connect(out);
+    o.start(t); o.stop(t + d + .1); lfo.start(t); lfo.stop(t + d + .1);
+    t += d + .04;
+  });
+}
+/* gong: parziali non armoniche che si spengono a velocità diverse, più il colpo del battente */
+function gong(){
+  if (!soundOn()) return;
+  const t = AC.currentTime, out = AC.createGain();
+  out.gain.value = 0.5;
+  out.connect(AC.destination);
+  [[1, 1, 4], [1.48, .6, 3], [2.13, .45, 2.2], [2.6, .3, 1.6], [3.4, .2, 1.1], [4.7, .12, .7]].forEach(([r, a, d]) => {
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.frequency.setValueAtTime(98 * r * 1.01, t);
+    o.frequency.exponentialRampToValueAtTime(98 * r, t + .4);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(a, t + .01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g).connect(out); o.start(t); o.stop(t + d);
+  });
+  const n = AC.createBufferSource(), b = AC.createBuffer(1, AC.sampleRate * .08, AC.sampleRate), ch = b.getChannelData(0);
+  for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / ch.length);
+  const f = AC.createBiquadFilter(), ng = AC.createGain();
+  f.type = "lowpass"; f.frequency.value = 900; ng.gain.value = .5;
+  n.buffer = b; n.connect(f).connect(ng).connect(out); n.start(t);
+}
+/* suona solo per cambiamenti visti mentre la pagina è aperta: chi apre o ricarica il proiettore non sente niente */
+function projSounds(){
+  const c = cfg(), q = curQ();
+  /* tempo scaduto o risposte chiuse: la domanda passa da "domanda" a risposte o soluzione */
+  if (q && lastQ.id === q.id && lastQ.phase === "domanda" && ["risposte", "soluzione"].includes(c.phase)) gong();
+  lastQ = { id: q?.id || "", phase: c.phase };
+  /* prenotazioni nuove della stessa domanda: riaprire le prenotazioni o cambiare domanda riparte da zero */
+  const key = q && c.phase === "domanda" && isBuzz(q) ? q.id + ":" + (c.clueAt || c.start) : "";
+  const n = key ? buzzes(q).length : 0;
+  if (key && key === buzzSeen.key && n > buzzSeen.n) trumpet(buzzSeen.n === 0);
+  buzzSeen = { key, n };
+}
+if (IS_PROJ) ["click", "keydown"].forEach(e => addEventListener(e, unlockSound));
 
 DB.ref("quiz").on("value", s => {
     ST = s.val() || {};
     /* vecchie versioni salvavano lo sfondo dentro quiz/: lo sposto nel suo nodo */
-    if (!IS_PLAYER && !IS_PROJ && ST.settings?.bg) DB.ref("quizBg").set(ST.settings.bg).then(() => DB.ref("quiz/settings/bg").remove());
+    if (IS_HOST && ST.settings?.bg) DB.ref("quizBg").set(ST.settings.bg).then(() => DB.ref("quiz/settings/bg").remove());
+    if (IS_PROJ) projSounds();
     render();
   },
   e => { document.getElementById("app").innerHTML = "<p>Errore database: " + e.message + "</p>"; });
-if (!IS_PLAYER && !IS_PROJ) DB.ref("quizSecret").on("value", s => { SECRET = s.val() || {}; render(); });
+if (IS_HOST) DB.ref("quizSecret").on("value", s => { SECRET = s.val() || {}; render(); });
 /* lo sfondo sta in un nodo separato: si scarica una volta sola e non a ogni risposta */
 if (!IS_PROJ) DB.ref("quizBg").on("value", s => {
   document.body.classList.toggle("custom-bg", !!s.val());
@@ -855,7 +940,8 @@ function showSol(){
 function viewProj(){
   const c = cfg(), q = curQ(), ph = c.phase;
   const corner = `<div class="pj-board comic-box"><h3>Classifica</h3>${ranked().map(t => `<div><span>${h(t.name)}</span><strong>${t.pts}</strong></div>`).join("") || "<div>Nessuna squadra</div>"}</div>`;
-  const fs = document.fullscreenElement ? "" : `<button class="pj-fs" onclick="document.documentElement.requestFullscreen()">schermo intero</button>`;
+  const fs = (soundOn() ? "" : `<button class="pj-snd" onclick="unlockSound()">🔇 Clicca qui per attivare il suono</button>`)
+    + (document.fullscreenElement ? "" : `<button class="pj-fs" onclick="document.documentElement.requestFullscreen()">schermo intero</button>`);
   const full = (id, cap) => `<div class="pj-full">${img(id)}${cap ? `<div class="pj-cap">${h(cap)}</div>` : ""}</div>`;
   /* prima delle iscrizioni: solo la copertina, niente QR né classifica */
   if (ph === "copertina") return (ST.settings?.cover ? full(ST.settings.cover) : `<div class="pj"><div class="pj-center"><div class="pj-title comic-title">${h(quizName())}</div></div></div>`) + fs;
